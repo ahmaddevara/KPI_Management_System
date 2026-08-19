@@ -2,7 +2,8 @@ import React, { useEffect, useState } from "react";
 import api, { formatErr, MONTHS } from "@/lib/api";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
-import { Download, FileText, Copy, ChevronRight, RefreshCw } from "lucide-react";
+import { Download, FileText, Copy, ChevronRight, RefreshCw, MessageCircle } from "lucide-react";
+import WhatsAppButton from "@/components/WhatsAppButton";
 
 const now = new Date();
 const fmtRp = (v) => `Rp ${Number(v||0).toLocaleString("id-ID")}`;
@@ -93,12 +94,15 @@ export default function Payroll() {
                 <td className="text-right mono font-semibold">{fmtRp(r.take_home_pay)}</td>
                 <td className="text-[11px]">{r.bank}<div className="text-gray-500 mono text-[10px]">{r.no_rek}</div></td>
                 <td className="text-right">
-                  <button
-                    data-testid={`payroll-detail-${r.nik}`}
-                    onClick={()=>nav(`/payroll/${r.nik}?tahun=${tahun}&bulan=${bulan}`)}
-                    className="text-[#0052FF] text-sm hover:underline inline-flex items-center gap-1">
-                    Detail <ChevronRight size={14}/>
-                  </button>
+                  <div className="inline-flex items-center gap-2 justify-end">
+                    <WhatsAppButton nik={r.nik} tahun={tahun} bulan={bulan} label="WA"/>
+                    <button
+                      data-testid={`payroll-detail-${r.nik}`}
+                      onClick={()=>nav(`/payroll/${r.nik}?tahun=${tahun}&bulan=${bulan}`)}
+                      className="text-[#0052FF] text-sm hover:underline inline-flex items-center gap-1">
+                      Detail <ChevronRight size={14}/>
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}

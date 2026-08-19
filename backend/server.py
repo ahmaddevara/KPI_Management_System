@@ -13,6 +13,9 @@ from typing import List, Optional, Dict, Any
 
 import bcrypt
 import jwt
+import hmac
+import hashlib
+import base64
 from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends, UploadFile, File, Query
 from fastapi.responses import StreamingResponse
 from starlette.middleware.cors import CORSMiddleware
@@ -125,6 +128,7 @@ class Karyawan(BaseModel):
     sistem_kerja: Optional[str] = "Bulanan"
     no_rek: Optional[str] = ""
     bank: Optional[str] = "BCA"
+    no_hp: Optional[str] = ""
 
 class KPIMaster(BaseModel):
     id: Optional[str] = None
@@ -637,6 +641,15 @@ async def update_setting_api(s: SettingModel, user: dict = Depends(require_role(
     return doc
 
 # ----------------- Payroll -----------------
+def _slip_token(nik: str, tahun: int, bulan: int) -> str:
+    key = os.environ.get("JWT_SECRET", "").encode()
+    msg = f"{nik}|{tahun}|{bulan}".encode()
+    sig = hmac.new(key, msg, hashlib.sha256).digest()
+    return base64.urlsafe_b64encode(sig)[:16].decode()
+
+def _verify_slip_token(nik: str, tahun: int, bulan: int, token: str) -> bool:
+    return hmac.compare_digest(_slip_token(nik, tahun, bulan), token)
+
 async def compute_payroll_row(karyawan: dict, payroll: dict, setting: dict) -> dict:
     gaji_pokok = karyawan.get("gaji_pokok") or 0
     t_trans = karyawan.get("tunjangan_transportasi") or 0
@@ -816,16 +829,74 @@ async def export_payroll_rekap(tahun: int, bulan: int, fmt: str = "excel", user:
     return StreamingResponse(buf, media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="payroll_{tahun}_{bulan:02d}.pdf"'})
 
+@api.get("/payroll/slip/public")
+async def export_payroll_slip_public(nik: str, tahun: int, bulan: int, token: str, fmt: str = "pdf"):
+    """Public tokenized download for WhatsApp sharing (no auth)."""
+    if not _verify_slip_token(nik, tahun, bulan, token):
+        raise HTTPException(403, "Token tidak valid")
+    return await _generate_slip_response(nik, tahun, bulan, fmt)
+
 @api.get("/payroll/slip/{nik}")
 async def export_payroll_slip(nik: str, tahun: int, bulan: int, fmt: str = "pdf", user: dict = Depends(get_current_user)):
     if user.get("role") == "karyawan" and user.get("nik") != nik:
         raise HTTPException(403, "Akses ditolak")
-    slip = await get_payroll(nik, tahun, bulan, user)
-    kar = slip["karyawan"]; p = slip["payroll"]; h = slip["hasil"]
+    return await _generate_slip_response(nik, tahun, bulan, fmt)
+
+@api.get("/payroll/wa/{nik}")
+async def payroll_wa_link(nik: str, tahun: int, bulan: int, user: dict = Depends(require_role("admin","supervisor"))):
+    """Return wa.me link + suggested message for sending slip via WhatsApp."""
+    kar = await db.karyawan.find_one({"nik": nik})
+    if not kar: raise HTTPException(404, "Karyawan tidak ditemukan")
+    strip_id(kar)
+    p = await db.payroll_input.find_one({"nik": nik, "tahun": tahun, "bulan": bulan}) or {}
+    strip_id(p)
+    setting = await get_setting()
+    h = await compute_payroll_row(kar, p, setting)
+
+    def norm_phone(hp: str) -> str:
+        hp = (hp or "").strip().replace(" ","").replace("-","").replace("+","")
+        if not hp: return ""
+        if hp.startswith("0"): hp = "62" + hp[1:]
+        if not hp.startswith("62"): hp = "62" + hp
+        return hp
+
+    phone = norm_phone(kar.get("no_hp",""))
+    token = _slip_token(nik, tahun, bulan)
+    backend = os.environ.get("PUBLIC_BACKEND_URL") or ""
+    pdf_url = f"{backend}/api/payroll/slip/public?nik={nik}&tahun={tahun}&bulan={bulan}&token={token}&fmt=pdf"
+    fmt_rp = lambda v: f"Rp {int(v or 0):,}".replace(",",".")
+    msg = (
+        f"*AP GROUP — Slip Gaji {MONTHS_ID[bulan-1]} {tahun}*\n\n"
+        f"Halo {kar['nama']},\n"
+        f"Berikut ringkasan gaji Anda periode {p.get('periode_gaji') or MONTHS_ID[bulan-1]+' '+str(tahun)}:\n\n"
+        f"• Gaji Kotor: {fmt_rp(h['total_gaji_kotor'])}\n"
+        f"• Lembur/Bonus: +{fmt_rp(h['total_lembur_lainnya'])}\n"
+        f"• Potongan: -{fmt_rp(h['total_potongan'])}\n"
+        f"---\n"
+        f"*Take Home Pay: {fmt_rp(h['take_home_pay'])}*\n\n"
+        f"Slip lengkap (PDF):\n{pdf_url}\n\n"
+        f"Terima kasih.\n_HR AP Group_"
+    )
+    import urllib.parse
+    encoded = urllib.parse.quote(msg)
+    wa_link = f"https://wa.me/{phone}?text={encoded}" if phone else f"https://wa.me/?text={encoded}"
+    return {
+        "wa_link": wa_link, "pdf_url": pdf_url, "message": msg,
+        "phone": phone, "has_phone": bool(phone),
+        "nama": kar["nama"], "take_home_pay": h["take_home_pay"],
+    }
+
+async def _generate_slip_response(nik: str, tahun: int, bulan: int, fmt: str):
+    kar = await db.karyawan.find_one({"nik": nik})
+    if not kar: raise HTTPException(404, "Karyawan tidak ditemukan")
+    strip_id(kar)
+    p = await db.payroll_input.find_one({"nik": nik, "tahun": tahun, "bulan": bulan}) or {"nik": nik, "tahun": tahun, "bulan": bulan}
+    strip_id(p)
+    setting = await get_setting()
+    h = await compute_payroll_row(kar, p, setting)
     if fmt == "excel":
         rows = [
-            ["AP GROUP — SLIP GAJI KARYAWAN"],
-            [""],
+            ["AP GROUP — SLIP GAJI KARYAWAN"], [""],
             ["A. DATA KARYAWAN"],
             ["Nama Karyawan", ":", kar["nama"]],
             ["Jabatan", ":", kar["jabatan"]],
@@ -837,33 +908,28 @@ async def export_payroll_slip(nik: str, tahun: int, bulan: int, fmt: str = "pdf"
             ["Tunjangan Transportasi", h["tunjangan_transportasi"]],
             ["Tunjangan Makan", h["tunjangan_makan"]],
             ["Tunjangan Kesehatan", h["tunjangan_kesehatan"]],
-            ["Total Gaji Kotor", h["total_gaji_kotor"]],
-            [""],
+            ["Total Gaji Kotor", h["total_gaji_kotor"]], [""],
             ["C. LEMBUR / LAINNYA", "Jumlah", "Satuan", "Harga", "Nominal"],
             ["Lembur", p.get("lembur_jam", 0), "Jam", h["rate_lembur"], h["total_lembur"]],
             ["Bonus Lainnya", "-", "-", "-", h["bonus_lainnya"]],
-            ["Total Lembur / Lainnya", "", "", "", h["total_lembur_lainnya"]],
-            [""],
+            ["Total Lembur / Lainnya", "", "", "", h["total_lembur_lainnya"]], [""],
             ["D. POTONGAN GAJI", "Jumlah", "Satuan", "Harga", "Nominal"],
             ["Keterlambatan / Izin", p.get("terlambat_jam", 0), "Jam", h["rate_terlambat"], h["pot_terlambat"]],
             ["Tidak Masuk / Alpha", p.get("tidak_masuk_hari", 0), "Hari", h["rate_tidak_masuk"], h["pot_tidak_masuk"]],
             ["Potongan Pinjaman", "-", "-", "-", h["pot_pinjaman"]],
             ["Potongan Lainnya", "-", "-", "-", h["pot_lainnya"]],
-            ["Total Potongan", "", "", "", h["total_potongan"]],
-            [""],
+            ["Total Potongan", "", "", "", h["total_potongan"]], [""],
             ["E. REKAP GAJI"],
             ["Total Gaji Kotor", h["total_gaji_kotor"]],
             ["Total Lembur / Lainnya", h["total_lembur_lainnya"]],
             ["Total Potongan", -h["total_potongan"]],
-            ["Gaji Diterima (Take Home Pay)", h["take_home_pay"]],
-            [""],
+            ["Gaji Diterima (Take Home Pay)", h["take_home_pay"]], [""],
             ["F. CATATAN", p.get("catatan","")],
         ]
         xlsx = build_workbook({"Slip Gaji": rows})
         return StreamingResponse(io.BytesIO(xlsx),
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             headers={"Content-Disposition": f'attachment; filename="slip_{nik}_{tahun}_{bulan:02d}.xlsx"'})
-    # PDF
     from reportlab.lib.pagesizes import A4
     from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
     from reportlab.lib.styles import getSampleStyleSheet
@@ -884,7 +950,6 @@ async def export_payroll_slip(nik: str, tahun: int, bulan: int, fmt: str = "pdf"
     t = Table(data_karyawan, colWidths=[150, 350])
     t.setStyle(TableStyle([("FONTSIZE",(0,0),(-1,-1),9),("GRID",(0,0),(-1,-1),0.3, colors.HexColor("#9CA3AF"))]))
     story.append(Paragraph("<b>A. DATA KARYAWAN</b>", styles["Heading4"])); story.append(t); story.append(Spacer(1, 12))
-
     fmt_rp = lambda v: f"Rp {v:,.0f}"
     comp = [["Komponen","Nominal"],
             ["Gaji Pokok", fmt_rp(h["gaji_pokok"])],
@@ -897,7 +962,6 @@ async def export_payroll_slip(nik: str, tahun: int, bulan: int, fmt: str = "pdf"
         ("FONTSIZE",(0,0),(-1,-1),9),("GRID",(0,0),(-1,-1),0.3, colors.HexColor("#9CA3AF")),
         ("ALIGN",(-1,0),(-1,-1),"RIGHT"),("FONTNAME",(0,-1),(-1,-1),"Helvetica-Bold")]))
     story.append(Paragraph("<b>B. KOMPONEN GAJI</b>", styles["Heading4"])); story.append(tt); story.append(Spacer(1, 12))
-
     lembur = [["Komponen","Jumlah","Satuan","Harga","Nominal"],
               ["Lembur", p.get("lembur_jam", 0), "Jam", fmt_rp(h["rate_lembur"]), fmt_rp(h["total_lembur"])],
               ["Bonus Lainnya", "-", "-", "-", fmt_rp(h["bonus_lainnya"])],
@@ -906,7 +970,6 @@ async def export_payroll_slip(nik: str, tahun: int, bulan: int, fmt: str = "pdf"
     tl.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0), colors.HexColor("#111827")),("TEXTCOLOR",(0,0),(-1,0), colors.white),
         ("FONTSIZE",(0,0),(-1,-1),9),("GRID",(0,0),(-1,-1),0.3, colors.HexColor("#9CA3AF")),("FONTNAME",(0,-1),(-1,-1),"Helvetica-Bold")]))
     story.append(Paragraph("<b>C. LEMBUR / LAINNYA</b>", styles["Heading4"])); story.append(tl); story.append(Spacer(1, 12))
-
     pot = [["Jenis","Jumlah","Satuan","Harga","Jumlah Potongan"],
            ["Keterlambatan / Izin", p.get("terlambat_jam", 0), "Jam", fmt_rp(h["rate_terlambat"]), fmt_rp(h["pot_terlambat"])],
            ["Tidak Masuk / Alpha", p.get("tidak_masuk_hari", 0), "Hari", fmt_rp(h["rate_tidak_masuk"]), fmt_rp(h["pot_tidak_masuk"])],
@@ -917,7 +980,6 @@ async def export_payroll_slip(nik: str, tahun: int, bulan: int, fmt: str = "pdf"
     tp.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0), colors.HexColor("#DC2626")),("TEXTCOLOR",(0,0),(-1,0), colors.white),
         ("FONTSIZE",(0,0),(-1,-1),9),("GRID",(0,0),(-1,-1),0.3, colors.HexColor("#9CA3AF")),("FONTNAME",(0,-1),(-1,-1),"Helvetica-Bold")]))
     story.append(Paragraph("<b>D. POTONGAN GAJI</b>", styles["Heading4"])); story.append(tp); story.append(Spacer(1, 12))
-
     rekap = [["Keterangan","Nominal"],
              ["Total Gaji Kotor", fmt_rp(h["total_gaji_kotor"])],
              ["Total Lembur / Lainnya", fmt_rp(h["total_lembur_lainnya"])],
@@ -931,11 +993,9 @@ async def export_payroll_slip(nik: str, tahun: int, bulan: int, fmt: str = "pdf"
         ("TEXTCOLOR",(0,-1),(-1,-1), colors.white),
         ("FONTNAME",(0,-1),(-1,-1),"Helvetica-Bold")]))
     story.append(Paragraph("<b>E. REKAP GAJI</b>", styles["Heading4"])); story.append(tr); story.append(Spacer(1, 12))
-
     if p.get("catatan"):
         story.append(Paragraph("<b>F. CATATAN</b>", styles["Heading4"]))
         story.append(Paragraph(p["catatan"], styles["BodyText"]))
-
     doc.build(story); buf.seek(0)
     return StreamingResponse(buf, media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="slip_{nik}_{tahun}_{bulan:02d}.pdf"'})

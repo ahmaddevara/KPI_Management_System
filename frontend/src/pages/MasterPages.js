@@ -36,6 +36,7 @@ export function MasterKaryawan() {
       {key:"tunjangan_kesehatan",label:"Tj. Kesehatan",type:"number"},
       {key:"no_rek",label:"No Rekening"},
       {key:"bank",label:"Bank",type:"select",options:["BCA","BRI","BNI","Mandiri","DANA","GoPay","OVO"]},
+      {key:"no_hp",label:"No HP (WA)"},
     ]}/>;
 }
 

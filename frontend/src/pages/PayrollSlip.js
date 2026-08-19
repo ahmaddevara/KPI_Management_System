@@ -3,6 +3,7 @@ import { useParams, useSearchParams, useNavigate, Link } from "react-router-dom"
 import api, { formatErr, MONTHS } from "@/lib/api";
 import { toast } from "sonner";
 import { ArrowLeft, Save, Download, FileText } from "lucide-react";
+import WhatsAppButton from "@/components/WhatsAppButton";
 
 const fmtRp = (v) => `Rp ${Number(v||0).toLocaleString("id-ID")}`;
 
@@ -69,6 +70,7 @@ export default function PayrollSlip() {
           <p className="text-sm text-gray-600">{k.jabatan} · {MONTHS[bulan-1]} {tahun}</p>
         </div>
         <div className="flex items-center gap-2">
+          <WhatsAppButton nik={nik} tahun={tahun} bulan={bulan} label="Kirim ke WhatsApp"/>
           <button onClick={save} data-testid="slip-save" className="flex items-center gap-2 bg-[#0052FF] text-white px-3 py-2 rounded-sm text-sm hover:bg-blue-700"><Save size={14}/> Simpan</button>
           <button onClick={()=>dl("excel")} data-testid="slip-dl-excel" className="flex items-center gap-1 border border-gray-300 px-3 py-2 rounded-sm text-sm hover:bg-gray-50"><Download size={14}/> Excel</button>
           <button onClick={()=>dl("pdf")} data-testid="slip-dl-pdf" className="flex items-center gap-1 border border-gray-300 px-3 py-2 rounded-sm text-sm hover:bg-gray-50"><FileText size={14}/> PDF</button>

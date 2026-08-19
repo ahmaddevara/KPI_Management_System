@@ -66,7 +66,7 @@ export default function Login() {
             required
             className="w-full border border-gray-300 rounded-sm px-3 py-2 mb-4 focus:outline-none focus:ring-1 focus:ring-[#0052FF] focus:border-[#0052FF]"
             value={email} onChange={(e)=>setEmail(e.target.value)}
-            placeholder="devaraahmad@gmail.com"
+            placeholder="nama@perusahaan.com"
           />
           <label className="block text-xs uppercase tracking-wider text-gray-500 mb-1">Kata Sandi</label>
           <input
@@ -83,12 +83,6 @@ export default function Login() {
           >
             <LogIn size={16}/> {loading ? "Memproses..." : "Masuk"}
           </button>
-          <div className="mt-8 text-xs text-gray-500 border border-dashed border-gray-300 p-3 rounded-sm">
-            <div className="font-semibold uppercase tracking-wider mb-1 text-gray-700">Akun Demo</div>
-            <div>Admin: devaraahmad@gmail.com / Admin123!</div>
-            <div>Supervisor: supervisor@apgroup.com / Supervisor123!</div>
-            <div>Karyawan: karyawan@apgroup.com / Karyawan123!</div>
-          </div>
         </form>
       </div>
     </div>

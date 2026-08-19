@@ -1,0 +1,79 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #F9FAFB;
+  --surface: #FFFFFF;
+  --text: #111827;
+  --text-2: #4B5563;
+  --border: #E5E7EB;
+  --brand: #0052FF;
+  --ok: #059669;
+  --warn: #D97706;
+  --danger: #DC2626;
+}
+
+html, body, #root { height: 100%; }
+body {
+  margin: 0;
+  font-family: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  color: var(--text);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+}
+h1, h2, h3, h4, h5, .heading { font-family: "Work Sans", ui-sans-serif, sans-serif; letter-spacing: -0.01em; }
+.mono { font-family: "JetBrains Mono", ui-monospace, monospace; }
+
+@layer base {
+  :root {
+    --background: 0 0% 98%;
+    --foreground: 220 26% 12%;
+    --card: 0 0% 100%;
+    --card-foreground: 220 26% 12%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 26% 12%;
+    --primary: 220 100% 50%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 220 14% 96%;
+    --secondary-foreground: 220 26% 12%;
+    --muted: 220 14% 96%;
+    --muted-foreground: 220 9% 46%;
+    --accent: 220 14% 96%;
+    --accent-foreground: 220 26% 12%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 220 13% 91%;
+    --input: 220 13% 91%;
+    --ring: 220 100% 50%;
+    --radius: 0.25rem;
+  }
+}
+
+@layer base {
+  * { @apply border-border; }
+  body { @apply bg-background text-foreground; }
+}
+
+/* Data density table */
+.data-table th {
+  @apply px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-500 bg-gray-50 border-b border-gray-200;
+}
+.data-table td {
+  @apply px-3 py-2 text-sm border-b border-gray-100;
+}
+.data-table tbody tr:hover { @apply bg-gray-50; }
+
+/* status pills */
+.pill { @apply inline-flex items-center gap-1 rounded-sm px-2 py-0.5 text-xs font-medium; }
+.pill-ok { background: #ECFDF5; color: #065F46; }
+.pill-warn { background: #FEF3C7; color: #92400E; }
+.pill-danger { background: #FEE2E2; color: #991B1B; }
+.pill-neutral { background: #F3F4F6; color: #374151; }
+
+/* subtle animated bar */
+.bar-track { position: relative; height: 6px; background: #F3F4F6; border-radius: 2px; overflow: hidden; }
+.bar-fill { position: absolute; inset: 0 auto 0 0; background: var(--brand); transition: width .4s cubic-bezier(.2,.7,.2,1); }
+.bar-fill.ok { background: var(--ok); }
+.bar-fill.warn { background: var(--warn); }
+.bar-fill.danger { background: var(--danger); }

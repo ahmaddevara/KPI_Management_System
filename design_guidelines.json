@@ -1,0 +1,86 @@
+{
+  "theme_strategy": "Light mode by default for heavy data-entry readability, but support dark mode via tailwind 'dark' class. Tone is 'Swiss Brutalist / The Technical Look'. No soft shadows, highly structured.",
+  "typography": {
+    "headings": {
+      "family": "Work Sans, sans-serif",
+      "instruction": "Use Work Sans for all headings (H1 to H4). Apply tracking-tight for sizes 2xl and above. Font weight 600 or 700. Never use Inter or Roboto."
+    },
+    "body": {
+      "family": "IBM Plex Sans, sans-serif",
+      "instruction": "Use IBM Plex Sans for body text, tables, and numeric data. Highly legible for dense numbers."
+    },
+    "scale": {
+      "h1": "text-3xl font-semibold tracking-tight",
+      "h2": "text-xl font-semibold",
+      "h3": "text-lg font-medium",
+      "body": "text-sm",
+      "small": "text-xs text-muted-foreground uppercase tracking-wider"
+    }
+  },
+  "colors": {
+    "archetype": "ARCHETYPE 4: SWISS & HIGH-CONTRAST (Authority, Clarity, Truth)",
+    "palette": {
+      "background": "#F9FAFB",
+      "surface": "#FFFFFF",
+      "text_primary": "#111827",
+      "text_secondary": "#4B5563",
+      "border": "#E5E7EB",
+      "primary_brand": "#0052FF",
+      "kpi_success": "#059669",
+      "kpi_warning": "#D97706",
+      "kpi_danger": "#DC2626"
+    },
+    "instructions": "Strip out generic colors. Keep the UI mostly monochrome (whites, grays, charcoals). Use color *only* to indicate KPI status (Green=Achieved, Red=Failed) or primary actions (Blue). Do NOT use teal green (#1B93A4) or purple (#7351B7)."
+  },
+  "layouts": {
+    "global": "Sidebar navigation (w-64) + Main content area. Full viewport height.",
+    "dashboard_grid": "MODE B: High Density Grid. grid-cols-1 md:grid-cols-4 gap-4.",
+    "spacing": "Dense inner padding for cards (p-4 or p-6). No massive white spaces as this is an enterprise data tool. Everything must fit efficiently."
+  },
+  "surfaces_and_borders": {
+    "style": "GRID BORDERS (The 'Technical' Look). Flat backgrounds, 1px subtle borders (border-border), NO box-shadows. Sharp or slightly rounded corners (rounded-md max).",
+    "cards": "bg-white border border-gray-200 rounded-none or rounded-sm. No drop shadows. Hover states should slightly dim the border or background."
+  },
+  "components": {
+    "tables": "Data dense. py-2 px-3 for cells. Header rows must have a subtle background (bg-gray-50) and uppercase text (text-xs text-gray-500 tracking-wider).",
+    "forms": "Inputs use flat borders (border-gray-300). focus:ring-1 focus:ring-primary focus:border-primary. Shadcn-based but remove soft shadows.",
+    "buttons": "Square or rounded-sm. Primary buttons are solid brand color. Secondary are outline with high contrast text.",
+    "charts": "Use Recharts. Minimal grid lines (stroke-dasharray), no background fills unless necessary. Clear legends."
+  },
+  "motion": {
+    "rules": "Minimalist. Use micro-interactions. Hover states on table rows (hover:bg-gray-50). Simple fade-in for charts."
+  },
+  "accessibility": {
+    "rules": "Minimum 4.5:1 contrast for text. All interactive elements MUST include data-testid (e.g., data-testid='login-submit-button'). Ensure active/focus states are highly visible (ring-2)."
+  },
+  "media_and_images": {
+    "instructions": "Avatars for user profiles, abstract architectural for login hero area.",
+    "image_urls": {
+      "login_hero": "https://images.unsplash.com/photo-1724906019868-93ad2c79414f?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMzV8MHwxfHNlYXJjaHwxfHxtb2Rlcm4lMjBjb3Jwb3JhdGUlMjBvZmZpY2UlMjBhcmNoaXRlY3R1cmV8ZW58MHx8fHwxNzg3MTEyNzY5fDA&ixlib=rb-4.1.0&q=85",
+      "user_avatar": "https://images.pexels.com/photos/20157010/pexels-photo-20157010.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940"
+    }
+  },
+  "icons": {
+    "library": "lucide-react",
+    "instruction": "Use lucide-react for all iconography. Keep stroke width to 1.5 or 2 for clarity."
+  },
+  "instructions_to_main_agent": [
+    "This is an Indonesian Enterprise KPI Dashboard. Ensure all text and labels are in Bahasa Indonesia (e.g., 'Beranda', 'Karyawan', 'Pengaturan', 'Keluar').",
+    "Add font imports for 'Work Sans' (Headings) and 'IBM Plex Sans' (Body) to public/index.html or src/index.css.",
+    "Do NOT use 'Inter' or 'Roboto'.",
+    "Follow the 'Flat / High Density' design rules: 1px borders, no shadows, very crisp tabular design.",
+    "Create a layout wrapper with a Sidebar (Sidebar contains Master Data, Input KPI, Rekap) and Topbar (User Profile, Logout).",
+    "Use Recharts for the Dashboard KPI trends (trend bulanan).",
+    "Ensure all buttons, inputs, and major sections have data-testid attributes (e.g., data-testid='nav-master-karyawan').",
+    "Do not use generic 'Vercel-like' styling (soft shadows, large rounded corners). Make it look like a serious data tool."
+  ],
+  "UNIVERSAL_GUIDELINES_FOR_MAIN_AGENT": [
+    "Don't make generic centered layouts, simplistic gradients, and uniform styling.",
+    "You MUST NOT apply universal transition (e.g., transition: all).",
+    "You MUST NOT center align the app container (.App { text-align: center; }).",
+    "Keep data tables dense but use adequate padding (p-4 or p-6) for parent containers.",
+    "Never use AI assistant Emoji characters.",
+    "Never use placeholder image URLs (via.placeholder.com). Use provided image_urls.",
+    "All components must be functional in React (.js files in this setup, not .tsx)."
+  ]
+}

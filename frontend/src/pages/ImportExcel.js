@@ -28,6 +28,17 @@ export default function ImportExcel() {
     } catch(e){ toast.error(formatErr(e.response?.data?.detail)); }
     finally { setBusy(false); }
   };
+  const uploadPayroll = async () => {
+    if (!file) return;
+    setBusy(true);
+    try {
+      const fd = new FormData(); fd.append("file", file);
+      const { data } = await api.post("/import/payroll", fd, { headers: {"Content-Type": "multipart/form-data"} });
+      setStats({karyawan_baru: data.karyawan_baru, karyawan_diperbarui: data.karyawan_updated});
+      toast.success(`Payroll import: ${data.karyawan_baru} baru, ${data.karyawan_updated} diperbarui`);
+    } catch(e){ toast.error(formatErr(e.response?.data?.detail)); }
+    finally { setBusy(false); }
+  };
 
   return (
     <div>
@@ -42,9 +53,12 @@ export default function ImportExcel() {
           <label className="block text-[10px] uppercase tracking-wider text-gray-500 mb-1">Pilih File</label>
           <input data-testid="import-file" type="file" accept=".xlsx,.xlsm" onChange={e=>setFile(e.target.files[0])} className="text-sm"/>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
           <button data-testid="import-upload" onClick={upload} disabled={!file || busy} className="flex items-center gap-2 bg-[#0052FF] text-white px-3 py-2 rounded-sm text-sm hover:bg-blue-700 disabled:opacity-50">
-            <Upload size={14}/> {busy ? "Memproses..." : "Upload & Import"}
+            <Upload size={14}/> {busy ? "Memproses..." : "Import KPI"}
+          </button>
+          <button data-testid="import-payroll" onClick={uploadPayroll} disabled={!file || busy} className="flex items-center gap-2 bg-emerald-600 text-white px-3 py-2 rounded-sm text-sm hover:bg-emerald-700 disabled:opacity-50">
+            <Upload size={14}/> Import Payroll
           </button>
           <button data-testid="import-reset" onClick={reimportTemplate} disabled={busy} className="flex items-center gap-2 border border-gray-300 px-3 py-2 rounded-sm text-sm hover:bg-gray-50">
             <RefreshCw size={14}/> Impor Ulang Template AP Group

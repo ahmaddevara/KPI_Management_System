@@ -9,6 +9,10 @@ import Dashboard from "@/pages/Dashboard";
 import { MasterDivisi, MasterJabatan, MasterKaryawan, MasterKPI } from "@/pages/MasterPages";
 import TargetKPI from "@/pages/TargetKPI";
 import InputKPI from "@/pages/InputKPI";
+import Approval from "@/pages/Approval";
+import Payroll from "@/pages/Payroll";
+import PayrollSlip from "@/pages/PayrollSlip";
+import YoY from "@/pages/YoY";
 import { RekapIndividu, RekapDivisi, RekapPerusahaan, RewardPunishment } from "@/pages/Rekap";
 import SettingPage from "@/pages/Setting";
 import ImportExcel from "@/pages/ImportExcel";
@@ -37,6 +41,10 @@ function App() {
             <Route path="/master/kpi" element={<Guard roles={["admin"]}><MasterKPI/></Guard>}/>
             <Route path="/target-kpi" element={<Guard roles={["admin","supervisor"]}><TargetKPI/></Guard>}/>
             <Route path="/input-kpi" element={<Guard roles={["admin","supervisor"]}><InputKPI/></Guard>}/>
+            <Route path="/approval" element={<Guard roles={["admin"]}><Approval/></Guard>}/>
+            <Route path="/payroll" element={<Payroll/>}/>
+            <Route path="/payroll/:nik" element={<PayrollSlip/>}/>
+            <Route path="/rekap/yoy" element={<Guard roles={["admin","supervisor"]}><YoY/></Guard>}/>
             <Route path="/rekap/individu" element={<RekapIndividu/>}/>
             <Route path="/rekap/divisi" element={<Guard roles={["admin","supervisor"]}><RekapDivisi/></Guard>}/>
             <Route path="/rekap/perusahaan" element={<Guard roles={["admin","supervisor"]}><RekapPerusahaan/></Guard>}/>

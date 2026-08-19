@@ -3,7 +3,8 @@ import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import {
   LayoutDashboard, Users, Briefcase, Target, ClipboardEdit,
-  BarChart3, Trophy, Settings, LogOut, Building2, Gauge, FileSpreadsheet, UserCircle2
+  BarChart3, Trophy, Settings, LogOut, Building2, Gauge, FileSpreadsheet, UserCircle2,
+  Wallet, CheckCircle2, CalendarRange
 } from "lucide-react";
 
 const NAV = [
@@ -16,10 +17,14 @@ const NAV = [
   { section: "Perencanaan" },
   { to: "/target-kpi", label: "Target KPI", icon: Target, roles: ["admin","supervisor"] },
   { to: "/input-kpi", label: "Input KPI", icon: ClipboardEdit, roles: ["admin","supervisor"] },
+  { to: "/approval", label: "Persetujuan KPI", icon: CheckCircle2, roles: ["admin"] },
+  { section: "Payroll" },
+  { to: "/payroll", label: "Payroll", icon: Wallet, roles: ["admin","supervisor","karyawan"] },
   { section: "Laporan" },
   { to: "/rekap/individu", label: "Rekap Individu", icon: BarChart3, roles: ["admin","supervisor","karyawan"] },
   { to: "/rekap/divisi", label: "Rekap Divisi", icon: BarChart3, roles: ["admin","supervisor"] },
   { to: "/rekap/perusahaan", label: "Rekap Perusahaan", icon: BarChart3, roles: ["admin","supervisor"] },
+  { to: "/rekap/yoy", label: "Perbandingan Tahun", icon: CalendarRange, roles: ["admin","supervisor"] },
   { to: "/reward", label: "Reward & Punishment", icon: Trophy, roles: ["admin","supervisor"] },
   { section: "Admin" },
   { to: "/users", label: "User & Akses", icon: UserCircle2, roles: ["admin"] },

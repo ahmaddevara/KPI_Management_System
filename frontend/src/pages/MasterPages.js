@@ -29,6 +29,13 @@ export function MasterKaryawan() {
       {key:"jabatan",label:"Jabatan",type:"select",options:jabatan},
       {key:"atasan",label:"Atasan"},
       {key:"status",label:"Status",type:"select",options:["Aktif","Tidak Aktif"]},
+      {key:"sistem_kerja",label:"Sistem Kerja",type:"select",options:["Bulanan","Harian","Borongan"]},
+      {key:"gaji_pokok",label:"Gaji Pokok",type:"number"},
+      {key:"tunjangan_transportasi",label:"Tj. Transportasi",type:"number"},
+      {key:"tunjangan_makan",label:"Tj. Makan",type:"number"},
+      {key:"tunjangan_kesehatan",label:"Tj. Kesehatan",type:"number"},
+      {key:"no_rek",label:"No Rekening"},
+      {key:"bank",label:"Bank",type:"select",options:["BCA","BRI","BNI","Mandiri","DANA","GoPay","OVO"]},
     ]}/>;
 }
 

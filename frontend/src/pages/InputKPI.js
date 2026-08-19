@@ -1,11 +1,13 @@
 import React, { useEffect, useMemo, useState } from "react";
 import api, { formatErr, MONTHS } from "@/lib/api";
 import { toast } from "sonner";
-import { Save, Filter } from "lucide-react";
+import { Save, Filter, Copy, Send } from "lucide-react";
+import { useAuth } from "@/contexts/AuthContext";
 
 const now = new Date();
 
 export default function InputKPI() {
+  const { user } = useAuth();
   const [tahun, setTahun] = useState(now.getFullYear());
   const [bulan, setBulan] = useState(now.getMonth()+1);
   const [divisi, setDivisi] = useState("");
@@ -67,6 +69,27 @@ export default function InputKPI() {
     finally { setSaving(false); }
   };
 
+  const copyPrev = async () => {
+    if (!confirm("Salin semua realisasi dari bulan sebelumnya ke bulan ini?")) return;
+    try {
+      const { data } = await api.post("/kpi-input/copy-previous", { tahun, bulan, divisi });
+      toast.success(`Berhasil salin ${data.copied} entri dari ${data.from}`);
+      const r = await api.get("/kpi-input", { params: { tahun, bulan, divisi } });
+      setInputs(r.data);
+      const v = {};
+      r.data.forEach(x => v[`${x.nik}::${x.kode_kpi}`] = x.realisasi);
+      setValues(v);
+    } catch(e){ toast.error(formatErr(e.response?.data?.detail)); }
+  };
+
+  const submitAll = async () => {
+    if (!confirm("Submit semua data KPI divisi ini untuk persetujuan Admin?")) return;
+    try {
+      const { data } = await api.post("/kpi-input/submit", { tahun, bulan, divisi });
+      toast.success(`${data.submitted} data disubmit`);
+    } catch(e){ toast.error(formatErr(e.response?.data?.detail)); }
+  };
+
   const getEnriched = (nik, kode) => inputs.find(i => i.nik === nik && i.kode_kpi === kode);
 
   return (
@@ -91,6 +114,14 @@ export default function InputKPI() {
           <button onClick={save} disabled={saving} data-testid="input-save" className="flex items-center gap-2 bg-[#0052FF] text-white px-3 py-2 rounded-sm text-sm hover:bg-blue-700">
             <Save size={14}/> {saving ? "Menyimpan..." : "Simpan"}
           </button>
+          <button onClick={copyPrev} data-testid="input-copy-prev" className="flex items-center gap-2 border border-gray-300 px-3 py-2 rounded-sm text-sm hover:bg-gray-50">
+            <Copy size={14}/> Copy Bulan Lalu
+          </button>
+          {user?.role === "supervisor" && (
+            <button onClick={submitAll} data-testid="input-submit" className="flex items-center gap-2 bg-[#111827] text-white px-3 py-2 rounded-sm text-sm">
+              <Send size={14}/> Submit
+            </button>
+          )}
         </div>
       </div>
 
@@ -111,7 +142,9 @@ export default function InputKPI() {
               const e = getEnriched(kar.nik, kpi.kode) || {};
               const target = e.target ?? targets[`${kpi.kode}-${tahun}-${bulan}`] ?? 0;
               const key = `${kar.nik}::${kpi.kode}`;
-              const st = e.status;
+              const st = e.status_kpi;
+              const wf = e.status || "approved";
+              const wfPill = {approved:"pill-ok", submitted:"pill-warn", draft:"pill-neutral", rejected:"pill-danger"}[wf];
               return (
                 <tr key={key}>
                   <td>
@@ -135,7 +168,7 @@ export default function InputKPI() {
                   <td className="text-right mono">{e.achievement != null ? (e.achievement*100).toFixed(2)+"%" : "-"}</td>
                   <td className="text-right mono">{kpi.bobot}</td>
                   <td className="text-right mono">{e.nilai != null ? e.nilai.toFixed(2) : "-"}</td>
-                  <td>{st && <span className={`pill ${st==="On Track"?"pill-ok":"pill-danger"}`}>{st}</span>}</td>
+                  <td>{st && <span className={`pill ${st==="On Track"?"pill-ok":"pill-danger"}`}>{st}</span>}<span className={`pill ${wfPill} ml-1`}>{wf}</span></td>
                 </tr>
               );
             }))}

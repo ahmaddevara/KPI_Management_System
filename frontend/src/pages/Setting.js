@@ -4,11 +4,14 @@ import { toast } from "sonner";
 import { Save } from "lucide-react";
 
 const FIELDS = [
-  { key: "threshold_a", label: "Grade A ≥ (%)" },
-  { key: "threshold_b", label: "Grade B ≥ (%)" },
-  { key: "threshold_c", label: "Grade C ≥ (%)" },
-  { key: "threshold_d", label: "Grade D ≥ (%)" },
-  { key: "on_track_min", label: "Ambang On Track (%)" },
+  { key: "threshold_a", label: "Grade A ≥ (%)", group: "KPI Grading" },
+  { key: "threshold_b", label: "Grade B ≥ (%)", group: "KPI Grading" },
+  { key: "threshold_c", label: "Grade C ≥ (%)", group: "KPI Grading" },
+  { key: "threshold_d", label: "Grade D ≥ (%)", group: "KPI Grading" },
+  { key: "on_track_min", label: "Ambang On Track (%)", group: "KPI Grading" },
+  { key: "rate_lembur", label: "Rate Lembur / Jam (Rp)", group: "Payroll" },
+  { key: "rate_terlambat", label: "Rate Terlambat / Jam (Rp)", group: "Payroll" },
+  { key: "rate_tidak_masuk", label: "Rate Tidak Masuk / Hari (Rp)", group: "Payroll" },
 ];
 
 export default function SettingPage() {
@@ -30,17 +33,22 @@ export default function SettingPage() {
         <p className="text-sm text-gray-600">Ubah ambang batas grade dan status on-track.</p>
       </div>
       <div className="bg-white border border-gray-200 rounded-sm p-4 max-w-2xl">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {FIELDS.map(f => (
-            <div key={f.key}>
-              <label className="block text-[10px] uppercase tracking-wider text-gray-500 mb-1">{f.label}</label>
-              <input data-testid={`setting-${f.key}`} type="number" step="0.01"
-                value={form[f.key] ?? ""} onChange={e=>setForm({...form, [f.key]: e.target.value})}
-                className="w-full border border-gray-300 rounded-sm px-2 py-1.5 text-sm"/>
+        {["KPI Grading","Payroll"].map(group => (
+          <div key={group} className="mb-4">
+            <div className="text-[10px] uppercase tracking-widest text-gray-500 mb-2">{group}</div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {FIELDS.filter(f=>f.group===group).map(f => (
+                <div key={f.key}>
+                  <label className="block text-[10px] uppercase tracking-wider text-gray-500 mb-1">{f.label}</label>
+                  <input data-testid={`setting-${f.key}`} type="number" step="0.01"
+                    value={form[f.key] ?? ""} onChange={e=>setForm({...form, [f.key]: e.target.value})}
+                    className="w-full border border-gray-300 rounded-sm px-2 py-1.5 text-sm mono"/>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
-        <button onClick={save} data-testid="setting-save" className="mt-4 flex items-center gap-2 bg-[#0052FF] text-white px-3 py-2 rounded-sm text-sm">
+          </div>
+        ))}
+        <button onClick={save} data-testid="setting-save" className="mt-2 flex items-center gap-2 bg-[#0052FF] text-white px-3 py-2 rounded-sm text-sm">
           <Save size={14}/> Simpan Pengaturan
         </button>
       </div>

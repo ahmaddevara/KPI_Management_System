@@ -117,6 +117,14 @@ class Karyawan(BaseModel):
     jabatan: str
     atasan: Optional[str] = "Owner"
     status: str = "Aktif"
+    # payroll master fields
+    gaji_pokok: Optional[float] = 0
+    tunjangan_transportasi: Optional[float] = 0
+    tunjangan_makan: Optional[float] = 0
+    tunjangan_kesehatan: Optional[float] = 0
+    sistem_kerja: Optional[str] = "Bulanan"
+    no_rek: Optional[str] = ""
+    bank: Optional[str] = "BCA"
 
 class KPIMaster(BaseModel):
     id: Optional[str] = None
@@ -143,6 +151,21 @@ class KPIInput(BaseModel):
     nik: str
     kode_kpi: str
     realisasi: float
+    status: Optional[str] = "approved"  # draft | submitted | approved | rejected
+
+class PayrollInput(BaseModel):
+    id: Optional[str] = None
+    bulan: int
+    tahun: int
+    nik: str
+    periode_gaji: Optional[str] = ""
+    lembur_jam: Optional[float] = 0
+    terlambat_jam: Optional[float] = 0
+    tidak_masuk_hari: Optional[float] = 0
+    potongan_pinjaman: Optional[float] = 0
+    potongan_lainnya: Optional[float] = 0
+    bonus_lainnya: Optional[float] = 0
+    catatan: Optional[str] = ""
 
 class SettingModel(BaseModel):
     threshold_a: float = 95
@@ -150,6 +173,10 @@ class SettingModel(BaseModel):
     threshold_c: float = 75
     threshold_d: float = 65
     on_track_min: float = 85
+    # payroll rates (per satuan)
+    rate_lembur: float = 12000
+    rate_terlambat: float = 12000
+    rate_tidak_masuk: float = 36000
 
 MONTHS_ID = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"]
 MONTHS_SHORT = ["Jan","Feb","Mar","Apr","Mei","Jun","Jul","Agu","Sep","Okt","Nov","Des"]
@@ -305,7 +332,8 @@ async def bulk_upsert_target(rows: List[KPITarget], user: dict = Depends(require
 # ----------------- Input KPI -----------------
 @api.get("/kpi-input")
 async def list_input(divisi: Optional[str] = None, bulan: Optional[int] = None, tahun: Optional[int] = None,
-                     nik: Optional[str] = None, user: dict = Depends(get_current_user)):
+                     nik: Optional[str] = None, only_approved: bool = False,
+                     user: dict = Depends(get_current_user)):
     q = {}
     if bulan: q["bulan"] = bulan
     if tahun: q["tahun"] = tahun
@@ -315,6 +343,8 @@ async def list_input(divisi: Optional[str] = None, bulan: Optional[int] = None, 
         if not user.get("nik"):
             return []
         q["nik"] = user["nik"]
+    if only_approved:
+        q["status"] = "approved"
     inputs = [strip_id(d) for d in await db.kpi_input.find(q).to_list(50000)]
     # enrich with computed fields
     result = []
@@ -351,21 +381,80 @@ async def list_input(divisi: Optional[str] = None, bulan: Optional[int] = None, 
             "achievement": round(ach, 4),
             "bobot": bobot,
             "nilai": round(nilai, 4),
-            "status": "On Track" if ach >= on_track_min else "Tertinggal",
+            "status_kpi": "On Track" if ach >= on_track_min else "Tertinggal",
+            "status": r.get("status", "approved"),
         })
         result.append(r)
     return result
 
 @api.post("/kpi-input/bulk")
 async def bulk_upsert_input(rows: List[KPIInput], user: dict = Depends(require_role("admin","supervisor"))):
+    default_status = "draft" if user.get("role") == "supervisor" else "approved"
     for r in rows:
         d = r.model_dump(exclude_none=True)
         d["id"] = d.get("id") or new_id()
+        if "status" not in d or not d["status"]:
+            d["status"] = default_status
         await db.kpi_input.update_one(
             {"nik": d["nik"], "kode_kpi": d["kode_kpi"], "tahun": d["tahun"], "bulan": d["bulan"]},
             {"$set": d}, upsert=True,
         )
     return {"ok": True, "count": len(rows)}
+
+@api.post("/kpi-input/submit")
+async def submit_input(body: dict, user: dict = Depends(require_role("supervisor","admin"))):
+    """Supervisor submits kpi_input for approval. Body: {tahun, bulan, divisi}"""
+    tahun, bulan, divisi = body.get("tahun"), body.get("bulan"), body.get("divisi")
+    kpi_master = {k["kode"]: k for k in await crud_list("kpi_master")}
+    kodes = [k for k, v in kpi_master.items() if not divisi or v.get("divisi") == divisi]
+    res = await db.kpi_input.update_many(
+        {"tahun": tahun, "bulan": bulan, "kode_kpi": {"$in": kodes}, "status": {"$in": ["draft", None]}},
+        {"$set": {"status": "submitted"}}
+    )
+    return {"ok": True, "submitted": res.modified_count}
+
+@api.post("/kpi-input/approve")
+async def approve_input(body: dict, user: dict = Depends(require_role("admin"))):
+    """Admin approves submitted inputs. Body: {tahun, bulan, divisi?, action: approve|reject}"""
+    tahun, bulan, divisi = body.get("tahun"), body.get("bulan"), body.get("divisi")
+    action = body.get("action", "approve")
+    new_status = "approved" if action == "approve" else "rejected"
+    kpi_master = {k["kode"]: k for k in await crud_list("kpi_master")}
+    kodes = [k for k, v in kpi_master.items() if not divisi or v.get("divisi") == divisi]
+    res = await db.kpi_input.update_many(
+        {"tahun": tahun, "bulan": bulan, "kode_kpi": {"$in": kodes}, "status": "submitted"},
+        {"$set": {"status": new_status}}
+    )
+    return {"ok": True, "updated": res.modified_count, "status": new_status}
+
+@api.post("/kpi-input/copy-previous")
+async def copy_previous_month(body: dict, user: dict = Depends(require_role("admin","supervisor"))):
+    """Copy realisasi from previous month. Body: {tahun, bulan, divisi?}"""
+    tahun, bulan, divisi = body.get("tahun"), body.get("bulan"), body.get("divisi")
+    prev_bulan = bulan - 1
+    prev_tahun = tahun
+    if prev_bulan < 1:
+        prev_bulan = 12
+        prev_tahun = tahun - 1
+    q = {"tahun": prev_tahun, "bulan": prev_bulan}
+    prev = await db.kpi_input.find(q).to_list(50000)
+    if divisi:
+        kpi_master = {k["kode"]: k for k in await crud_list("kpi_master")}
+        prev = [p for p in prev if kpi_master.get(p["kode_kpi"], {}).get("divisi") == divisi]
+    count = 0
+    default_status = "draft" if user.get("role") == "supervisor" else "approved"
+    for p in prev:
+        await db.kpi_input.update_one(
+            {"nik": p["nik"], "kode_kpi": p["kode_kpi"], "tahun": tahun, "bulan": bulan},
+            {"$set": {
+                "id": new_id(), "nik": p["nik"], "kode_kpi": p["kode_kpi"],
+                "tahun": tahun, "bulan": bulan, "realisasi": p.get("realisasi", 0),
+                "status": default_status,
+            }},
+            upsert=True,
+        )
+        count += 1
+    return {"ok": True, "copied": count, "from": f"{prev_tahun}-{prev_bulan}"}
 
 @api.delete("/kpi-input/{id_}")
 async def delete_input(id_: str, user: dict = Depends(require_role("admin","supervisor"))):
@@ -387,10 +476,12 @@ def calc_grade(pct, s):
     if pct >= s["threshold_d"]/100: return "D"
     return "E"
 
-async def compute_rows(bulan: Optional[int], tahun: int):
-    """Return enriched rows for all inputs in bulan/tahun."""
+async def compute_rows(bulan: Optional[int], tahun: int, only_approved: bool = True):
+    """Return enriched rows for all inputs in bulan/tahun. Rekap uses only approved by default."""
     q = {"tahun": tahun}
     if bulan: q["bulan"] = bulan
+    if only_approved:
+        q["status"] = {"$in": ["approved", None]}
     inputs = [strip_id(d) for d in await db.kpi_input.find(q).to_list(100000)]
     karyawan = {k["nik"]: k for k in await crud_list("karyawan")}
     kpi_master = {k["kode"]: k for k in await crud_list("kpi_master")}
@@ -544,6 +635,320 @@ async def update_setting_api(s: SettingModel, user: dict = Depends(require_role(
     doc = {"id": "default", **s.model_dump()}
     await db.setting.update_one({"id": "default"}, {"$set": doc}, upsert=True)
     return doc
+
+# ----------------- Payroll -----------------
+async def compute_payroll_row(karyawan: dict, payroll: dict, setting: dict) -> dict:
+    gaji_pokok = karyawan.get("gaji_pokok") or 0
+    t_trans = karyawan.get("tunjangan_transportasi") or 0
+    t_makan = karyawan.get("tunjangan_makan") or 0
+    t_kesehatan = karyawan.get("tunjangan_kesehatan") or 0
+    total_gaji_kotor = gaji_pokok + t_trans + t_makan + t_kesehatan
+
+    rate_lembur = setting.get("rate_lembur", 12000)
+    rate_terlambat = setting.get("rate_terlambat", 12000)
+    rate_tdk_masuk = setting.get("rate_tidak_masuk", 36000)
+
+    lembur_jam = payroll.get("lembur_jam") or 0
+    terlambat_jam = payroll.get("terlambat_jam") or 0
+    tdk_masuk_hari = payroll.get("tidak_masuk_hari") or 0
+    pot_pinjaman = payroll.get("potongan_pinjaman") or 0
+    pot_lainnya = payroll.get("potongan_lainnya") or 0
+    bonus = payroll.get("bonus_lainnya") or 0
+
+    total_lembur = lembur_jam * rate_lembur
+    pot_terlambat = terlambat_jam * rate_terlambat
+    pot_tdk_masuk = tdk_masuk_hari * rate_tdk_masuk
+    total_potongan = pot_terlambat + pot_tdk_masuk + pot_pinjaman + pot_lainnya
+    total_lembur_lainnya = total_lembur + bonus
+    take_home_pay = total_gaji_kotor + total_lembur_lainnya - total_potongan
+
+    return {
+        "gaji_pokok": gaji_pokok,
+        "tunjangan_transportasi": t_trans,
+        "tunjangan_makan": t_makan,
+        "tunjangan_kesehatan": t_kesehatan,
+        "total_gaji_kotor": total_gaji_kotor,
+        "rate_lembur": rate_lembur,
+        "rate_terlambat": rate_terlambat,
+        "rate_tidak_masuk": rate_tdk_masuk,
+        "total_lembur": total_lembur,
+        "bonus_lainnya": bonus,
+        "total_lembur_lainnya": total_lembur_lainnya,
+        "pot_terlambat": pot_terlambat,
+        "pot_tidak_masuk": pot_tdk_masuk,
+        "pot_pinjaman": pot_pinjaman,
+        "pot_lainnya": pot_lainnya,
+        "total_potongan": total_potongan,
+        "take_home_pay": take_home_pay,
+    }
+
+@api.get("/payroll")
+async def list_payroll(tahun: int, bulan: int, user: dict = Depends(get_current_user)):
+    if user.get("role") == "karyawan" and not user.get("nik"):
+        return []
+    kar_list = await crud_list("karyawan")
+    if user.get("role") == "karyawan":
+        kar_list = [k for k in kar_list if k["nik"] == user["nik"]]
+    payrolls = {p["nik"]: strip_id(p) for p in await db.payroll_input.find({"tahun": tahun, "bulan": bulan}).to_list(5000)}
+    setting = await get_setting()
+    out = []
+    for kar in kar_list:
+        p = payrolls.get(kar["nik"], {"nik": kar["nik"], "tahun": tahun, "bulan": bulan})
+        computed = await compute_payroll_row(kar, p, setting)
+        out.append({
+            "nik": kar["nik"], "nama": kar["nama"], "jabatan": kar["jabatan"],
+            "divisi": kar["divisi"], "sistem_kerja": kar.get("sistem_kerja", "Bulanan"),
+            "no_rek": kar.get("no_rek",""), "bank": kar.get("bank","BCA"),
+            "periode_gaji": p.get("periode_gaji", ""),
+            "catatan": p.get("catatan",""),
+            "lembur_jam": p.get("lembur_jam", 0),
+            "terlambat_jam": p.get("terlambat_jam", 0),
+            "tidak_masuk_hari": p.get("tidak_masuk_hari", 0),
+            "potongan_pinjaman": p.get("potongan_pinjaman", 0),
+            "potongan_lainnya": p.get("potongan_lainnya", 0),
+            **computed,
+        })
+    out.sort(key=lambda x: x["nama"] or "")
+    return out
+
+@api.get("/payroll/{nik}")
+async def get_payroll(nik: str, tahun: int, bulan: int, user: dict = Depends(get_current_user)):
+    if user.get("role") == "karyawan" and user.get("nik") != nik:
+        raise HTTPException(403, "Akses ditolak")
+    kar = await db.karyawan.find_one({"nik": nik})
+    if not kar: raise HTTPException(404, "Karyawan tidak ditemukan")
+    strip_id(kar)
+    p = await db.payroll_input.find_one({"nik": nik, "tahun": tahun, "bulan": bulan})
+    if p: strip_id(p)
+    else: p = {"nik": nik, "tahun": tahun, "bulan": bulan}
+    setting = await get_setting()
+    computed = await compute_payroll_row(kar, p, setting)
+    return {"karyawan": kar, "payroll": p, "hasil": computed}
+
+@api.post("/payroll")
+async def upsert_payroll(row: PayrollInput, user: dict = Depends(require_role("admin","supervisor"))):
+    d = row.model_dump(exclude_none=True)
+    d["id"] = d.get("id") or new_id()
+    await db.payroll_input.update_one(
+        {"nik": d["nik"], "tahun": d["tahun"], "bulan": d["bulan"]},
+        {"$set": d}, upsert=True,
+    )
+    return {"ok": True}
+
+@api.post("/payroll/bulk")
+async def bulk_payroll(rows: List[PayrollInput], user: dict = Depends(require_role("admin","supervisor"))):
+    for r in rows:
+        d = r.model_dump(exclude_none=True)
+        d["id"] = d.get("id") or new_id()
+        await db.payroll_input.update_one(
+            {"nik": d["nik"], "tahun": d["tahun"], "bulan": d["bulan"]},
+            {"$set": d}, upsert=True,
+        )
+    return {"ok": True, "count": len(rows)}
+
+@api.post("/payroll/copy-previous")
+async def copy_payroll_previous(body: dict, user: dict = Depends(require_role("admin","supervisor"))):
+    tahun, bulan = body.get("tahun"), body.get("bulan")
+    prev_b, prev_y = (bulan-1, tahun) if bulan > 1 else (12, tahun-1)
+    prev = await db.payroll_input.find({"tahun": prev_y, "bulan": prev_b}).to_list(5000)
+    count = 0
+    for p in prev:
+        await db.payroll_input.update_one(
+            {"nik": p["nik"], "tahun": tahun, "bulan": bulan},
+            {"$set": {
+                "id": new_id(), "nik": p["nik"], "tahun": tahun, "bulan": bulan,
+                "lembur_jam": p.get("lembur_jam", 0),
+                "terlambat_jam": p.get("terlambat_jam", 0),
+                "tidak_masuk_hari": p.get("tidak_masuk_hari", 0),
+                "potongan_pinjaman": p.get("potongan_pinjaman", 0),
+                "potongan_lainnya": p.get("potongan_lainnya", 0),
+                "bonus_lainnya": p.get("bonus_lainnya", 0),
+                "periode_gaji": p.get("periode_gaji", ""),
+                "catatan": p.get("catatan", ""),
+            }},
+            upsert=True,
+        )
+        count += 1
+    return {"ok": True, "copied": count}
+
+@api.get("/payroll/export/rekap")
+async def export_payroll_rekap(tahun: int, bulan: int, fmt: str = "excel", user: dict = Depends(get_current_user)):
+    if user.get("role") == "karyawan":
+        raise HTTPException(403, "Akses ditolak")
+    rows = await list_payroll(tahun, bulan, user)
+    if fmt == "excel":
+        data = [["#","NIK","Nama","Jabatan","Sistem","No Rek","Bank","Take Home Pay"]]
+        for i, r in enumerate(rows, 1):
+            data.append([i, r["nik"], r["nama"], r["jabatan"], r["sistem_kerja"], r["no_rek"], r["bank"], r["take_home_pay"]])
+        total_thp = sum(r["take_home_pay"] for r in rows)
+        data.append(["", "", "TOTAL", "", "", "", "", total_thp])
+        xlsx = build_workbook({f"Payroll {MONTHS_ID[bulan-1]} {tahun}": data})
+        return StreamingResponse(io.BytesIO(xlsx),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'attachment; filename="payroll_{tahun}_{bulan:02d}.xlsx"'})
+    # PDF rekap
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.lib import colors
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=landscape(A4), leftMargin=24, rightMargin=24, topMargin=24, bottomMargin=24)
+    styles = getSampleStyleSheet(); story = []
+    story.append(Paragraph("<b>AP GROUP — Rekap Payroll</b>", styles["Title"]))
+    story.append(Paragraph(f"Periode: {MONTHS_ID[bulan-1]} {tahun}", styles["Heading3"]))
+    story.append(Spacer(1, 12))
+    data = [["#","NIK","Nama","Jabatan","Sistem","Take Home Pay"]]
+    for i, r in enumerate(rows, 1):
+        data.append([i, r["nik"], r["nama"], r["jabatan"], r["sistem_kerja"], f"Rp {r['take_home_pay']:,.0f}"])
+    total_thp = sum(r["take_home_pay"] for r in rows)
+    data.append(["", "", "TOTAL", "", "", f"Rp {total_thp:,.0f}"])
+    tbl = Table(data, repeatRows=1)
+    tbl.setStyle(TableStyle([
+        ("BACKGROUND",(0,0),(-1,0), colors.HexColor("#111827")),
+        ("TEXTCOLOR",(0,0),(-1,0), colors.white),
+        ("FONTSIZE",(0,0),(-1,-1), 9),
+        ("GRID",(0,0),(-1,-1),0.3, colors.HexColor("#9CA3AF")),
+        ("ALIGN",(-1,0),(-1,-1),"RIGHT"),
+        ("BACKGROUND",(0,-1),(-1,-1), colors.HexColor("#F3F4F6")),
+        ("FONTNAME",(0,-1),(-1,-1),"Helvetica-Bold"),
+    ]))
+    story.append(tbl); doc.build(story); buf.seek(0)
+    return StreamingResponse(buf, media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="payroll_{tahun}_{bulan:02d}.pdf"'})
+
+@api.get("/payroll/slip/{nik}")
+async def export_payroll_slip(nik: str, tahun: int, bulan: int, fmt: str = "pdf", user: dict = Depends(get_current_user)):
+    if user.get("role") == "karyawan" and user.get("nik") != nik:
+        raise HTTPException(403, "Akses ditolak")
+    slip = await get_payroll(nik, tahun, bulan, user)
+    kar = slip["karyawan"]; p = slip["payroll"]; h = slip["hasil"]
+    if fmt == "excel":
+        rows = [
+            ["AP GROUP — SLIP GAJI KARYAWAN"],
+            [""],
+            ["A. DATA KARYAWAN"],
+            ["Nama Karyawan", ":", kar["nama"]],
+            ["Jabatan", ":", kar["jabatan"]],
+            ["Periode Gaji", ":", p.get("periode_gaji") or f"{MONTHS_ID[bulan-1]} {tahun}"],
+            ["Sistem Kerja", ":", kar.get("sistem_kerja","Bulanan")],
+            [""],
+            ["B. KOMPONEN GAJI", "Nominal"],
+            ["Gaji Pokok", h["gaji_pokok"]],
+            ["Tunjangan Transportasi", h["tunjangan_transportasi"]],
+            ["Tunjangan Makan", h["tunjangan_makan"]],
+            ["Tunjangan Kesehatan", h["tunjangan_kesehatan"]],
+            ["Total Gaji Kotor", h["total_gaji_kotor"]],
+            [""],
+            ["C. LEMBUR / LAINNYA", "Jumlah", "Satuan", "Harga", "Nominal"],
+            ["Lembur", p.get("lembur_jam", 0), "Jam", h["rate_lembur"], h["total_lembur"]],
+            ["Bonus Lainnya", "-", "-", "-", h["bonus_lainnya"]],
+            ["Total Lembur / Lainnya", "", "", "", h["total_lembur_lainnya"]],
+            [""],
+            ["D. POTONGAN GAJI", "Jumlah", "Satuan", "Harga", "Nominal"],
+            ["Keterlambatan / Izin", p.get("terlambat_jam", 0), "Jam", h["rate_terlambat"], h["pot_terlambat"]],
+            ["Tidak Masuk / Alpha", p.get("tidak_masuk_hari", 0), "Hari", h["rate_tidak_masuk"], h["pot_tidak_masuk"]],
+            ["Potongan Pinjaman", "-", "-", "-", h["pot_pinjaman"]],
+            ["Potongan Lainnya", "-", "-", "-", h["pot_lainnya"]],
+            ["Total Potongan", "", "", "", h["total_potongan"]],
+            [""],
+            ["E. REKAP GAJI"],
+            ["Total Gaji Kotor", h["total_gaji_kotor"]],
+            ["Total Lembur / Lainnya", h["total_lembur_lainnya"]],
+            ["Total Potongan", -h["total_potongan"]],
+            ["Gaji Diterima (Take Home Pay)", h["take_home_pay"]],
+            [""],
+            ["F. CATATAN", p.get("catatan","")],
+        ]
+        xlsx = build_workbook({"Slip Gaji": rows})
+        return StreamingResponse(io.BytesIO(xlsx),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'attachment; filename="slip_{nik}_{tahun}_{bulan:02d}.xlsx"'})
+    # PDF
+    from reportlab.lib.pagesizes import A4
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.lib import colors
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=36, rightMargin=36, topMargin=36, bottomMargin=36)
+    styles = getSampleStyleSheet(); story = []
+    story.append(Paragraph("<b>AP GROUP</b>", styles["Title"]))
+    story.append(Paragraph("SLIP GAJI KARYAWAN", styles["Heading2"]))
+    story.append(Spacer(1, 12))
+    data_karyawan = [
+        ["Nama Karyawan", kar["nama"]],
+        ["Jabatan", kar["jabatan"]],
+        ["Periode Gaji", p.get("periode_gaji") or f"{MONTHS_ID[bulan-1]} {tahun}"],
+        ["Sistem Kerja", kar.get("sistem_kerja","Bulanan")],
+        ["No Rekening", f"{kar.get('no_rek','')} ({kar.get('bank','')})"],
+    ]
+    t = Table(data_karyawan, colWidths=[150, 350])
+    t.setStyle(TableStyle([("FONTSIZE",(0,0),(-1,-1),9),("GRID",(0,0),(-1,-1),0.3, colors.HexColor("#9CA3AF"))]))
+    story.append(Paragraph("<b>A. DATA KARYAWAN</b>", styles["Heading4"])); story.append(t); story.append(Spacer(1, 12))
+
+    fmt_rp = lambda v: f"Rp {v:,.0f}"
+    comp = [["Komponen","Nominal"],
+            ["Gaji Pokok", fmt_rp(h["gaji_pokok"])],
+            ["Tunjangan Transportasi", fmt_rp(h["tunjangan_transportasi"])],
+            ["Tunjangan Makan", fmt_rp(h["tunjangan_makan"])],
+            ["Tunjangan Kesehatan", fmt_rp(h["tunjangan_kesehatan"])],
+            ["Total Gaji Kotor", fmt_rp(h["total_gaji_kotor"])]]
+    tt = Table(comp, colWidths=[350, 150])
+    tt.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0), colors.HexColor("#111827")),("TEXTCOLOR",(0,0),(-1,0), colors.white),
+        ("FONTSIZE",(0,0),(-1,-1),9),("GRID",(0,0),(-1,-1),0.3, colors.HexColor("#9CA3AF")),
+        ("ALIGN",(-1,0),(-1,-1),"RIGHT"),("FONTNAME",(0,-1),(-1,-1),"Helvetica-Bold")]))
+    story.append(Paragraph("<b>B. KOMPONEN GAJI</b>", styles["Heading4"])); story.append(tt); story.append(Spacer(1, 12))
+
+    lembur = [["Komponen","Jumlah","Satuan","Harga","Nominal"],
+              ["Lembur", p.get("lembur_jam", 0), "Jam", fmt_rp(h["rate_lembur"]), fmt_rp(h["total_lembur"])],
+              ["Bonus Lainnya", "-", "-", "-", fmt_rp(h["bonus_lainnya"])],
+              ["Total Lembur / Lainnya", "", "", "", fmt_rp(h["total_lembur_lainnya"])]]
+    tl = Table(lembur, colWidths=[200, 60, 60, 90, 90])
+    tl.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0), colors.HexColor("#111827")),("TEXTCOLOR",(0,0),(-1,0), colors.white),
+        ("FONTSIZE",(0,0),(-1,-1),9),("GRID",(0,0),(-1,-1),0.3, colors.HexColor("#9CA3AF")),("FONTNAME",(0,-1),(-1,-1),"Helvetica-Bold")]))
+    story.append(Paragraph("<b>C. LEMBUR / LAINNYA</b>", styles["Heading4"])); story.append(tl); story.append(Spacer(1, 12))
+
+    pot = [["Jenis","Jumlah","Satuan","Harga","Jumlah Potongan"],
+           ["Keterlambatan / Izin", p.get("terlambat_jam", 0), "Jam", fmt_rp(h["rate_terlambat"]), fmt_rp(h["pot_terlambat"])],
+           ["Tidak Masuk / Alpha", p.get("tidak_masuk_hari", 0), "Hari", fmt_rp(h["rate_tidak_masuk"]), fmt_rp(h["pot_tidak_masuk"])],
+           ["Potongan Pinjaman", "-", "-", "-", fmt_rp(h["pot_pinjaman"])],
+           ["Potongan Lainnya", "-", "-", "-", fmt_rp(h["pot_lainnya"])],
+           ["Total Potongan", "", "", "", fmt_rp(h["total_potongan"])]]
+    tp = Table(pot, colWidths=[200, 60, 60, 90, 90])
+    tp.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0), colors.HexColor("#DC2626")),("TEXTCOLOR",(0,0),(-1,0), colors.white),
+        ("FONTSIZE",(0,0),(-1,-1),9),("GRID",(0,0),(-1,-1),0.3, colors.HexColor("#9CA3AF")),("FONTNAME",(0,-1),(-1,-1),"Helvetica-Bold")]))
+    story.append(Paragraph("<b>D. POTONGAN GAJI</b>", styles["Heading4"])); story.append(tp); story.append(Spacer(1, 12))
+
+    rekap = [["Keterangan","Nominal"],
+             ["Total Gaji Kotor", fmt_rp(h["total_gaji_kotor"])],
+             ["Total Lembur / Lainnya", fmt_rp(h["total_lembur_lainnya"])],
+             ["Total Potongan", f"- {fmt_rp(h['total_potongan'])}"],
+             ["GAJI DITERIMA (TAKE HOME PAY)", fmt_rp(h["take_home_pay"])]]
+    tr = Table(rekap, colWidths=[350, 150])
+    tr.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0), colors.HexColor("#111827")),("TEXTCOLOR",(0,0),(-1,0), colors.white),
+        ("FONTSIZE",(0,0),(-1,-1),10),("GRID",(0,0),(-1,-1),0.3, colors.HexColor("#9CA3AF")),
+        ("ALIGN",(-1,0),(-1,-1),"RIGHT"),
+        ("BACKGROUND",(0,-1),(-1,-1), colors.HexColor("#059669")),
+        ("TEXTCOLOR",(0,-1),(-1,-1), colors.white),
+        ("FONTNAME",(0,-1),(-1,-1),"Helvetica-Bold")]))
+    story.append(Paragraph("<b>E. REKAP GAJI</b>", styles["Heading4"])); story.append(tr); story.append(Spacer(1, 12))
+
+    if p.get("catatan"):
+        story.append(Paragraph("<b>F. CATATAN</b>", styles["Heading4"]))
+        story.append(Paragraph(p["catatan"], styles["BodyText"]))
+
+    doc.build(story); buf.seek(0)
+    return StreamingResponse(buf, media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="slip_{nik}_{tahun}_{bulan:02d}.pdf"'})
+
+# ----------------- YoY -----------------
+@api.get("/rekap/yoy")
+async def yoy_comparison(tahun: int, years: int = 3, user: dict = Depends(get_current_user)):
+    """Return multi-year monthly trend comparison"""
+    result = []
+    for y in range(tahun - years + 1, tahun + 1):
+        r = await rekap_perusahaan(y, user)
+        result.append({"tahun": y, "trend": r["trend"]})
+    return {"years": result, "focus_year": tahun}
 
 # ----------------- Export -----------------
 def build_workbook(sheets: Dict[str, List[List[Any]]]) -> bytes:
@@ -735,7 +1140,10 @@ async def import_from_xlsx_bytes(xlsx_bytes: bytes) -> dict:
             if r and r[0] and r[1]:
                 docs.append({"id": new_id(), "nik": str(r[0]), "nama": str(r[1]),
                              "divisi": str(r[2] or ""), "jabatan": str(r[3] or ""),
-                             "atasan": str(r[4] or "Owner"), "status": str(r[5] or "Aktif")})
+                             "atasan": str(r[4] or "Owner"), "status": str(r[5] or "Aktif"),
+                             "gaji_pokok": 0, "tunjangan_transportasi": 0,
+                             "tunjangan_makan": 0, "tunjangan_kesehatan": 0,
+                             "sistem_kerja": "Bulanan", "no_rek": "", "bank": "BCA"})
         if docs: await db.karyawan.insert_many(docs)
         stats["karyawan"] = len(docs)
     # Master KPI
@@ -809,8 +1217,69 @@ async def import_excel(file: UploadFile = File(...), user: dict = Depends(requir
         raise HTTPException(400, f"Gagal import: {e}")
     return {"ok": True, "stats": stats}
 
-@api.post("/import/template")
-async def import_template(user: dict = Depends(require_role("admin"))):
+@api.post("/import/payroll")
+async def import_payroll_from_excel(file: UploadFile = File(...), user: dict = Depends(require_role("admin"))):
+    """Import employees + payroll fields from AP Group payroll Excel file (uses 'Preview' sheet)."""
+    content = await file.read()
+    try:
+        clean = _clean_drawings(content)
+        wb = openpyxl.load_workbook(io.BytesIO(clean), data_only=True)
+    except Exception as e:
+        raise HTTPException(400, f"Gagal baca file: {e}")
+
+    # Find preview sheet
+    preview_sheet = None
+    for sn in wb.sheetnames:
+        if "preview" in sn.lower() and "copy" not in sn.lower():
+            preview_sheet = sn; break
+    if not preview_sheet:
+        for sn in wb.sheetnames:
+            if "preview" in sn.lower():
+                preview_sheet = sn; break
+    if not preview_sheet:
+        raise HTTPException(400, "Sheet Preview payroll tidak ditemukan")
+    ws = wb[preview_sheet]
+
+    # Preview rows: col B = Nama, C = Jabatan, D = Before25, E = THP Non Rev, G = No Rek, H = Bank
+    imported = 0; updated_thp = 0
+    existing = {k["nama"].lower().strip(): k for k in await crud_list("karyawan") if k.get("nama")}
+    for r in ws.iter_rows(min_row=3, values_only=True):
+        if not r or not r[1]: continue
+        nama = str(r[1]).strip()
+        if nama.upper().startswith("TOTAL"): continue
+        jabatan = str(r[2] or "").strip()
+        try: thp = float(r[4] or r[3] or 0)
+        except Exception: thp = 0
+        no_rek = str(r[6] or "").strip() if len(r) > 6 else ""
+        bank = str(r[7] or "BCA").strip() if len(r) > 7 else "BCA"
+        # match by name (case-insensitive prefix)
+        matched = None
+        for existing_nama, kar in existing.items():
+            if existing_nama[:15] == nama.lower()[:15] or nama.lower().startswith(existing_nama[:15]):
+                matched = kar; break
+        if matched:
+            await db.karyawan.update_one({"nik": matched["nik"]},
+                {"$set": {"jabatan": jabatan or matched["jabatan"], "no_rek": no_rek, "bank": bank,
+                          "gaji_pokok": thp}})
+            updated_thp += 1
+        else:
+            # create new karyawan (nik = generated from nama)
+            nik = "AUTO" + str(uuid.uuid4())[:6].upper()
+            div = "Lain"
+            # try to infer divisi from jabatan text
+            for dname in ["Marketing","Produksi","Admin","Design","HR","Finance"]:
+                if dname.lower() in jabatan.lower(): div = dname; break
+            await db.karyawan.insert_one({
+                "id": new_id(), "nik": nik, "nama": nama, "divisi": div,
+                "jabatan": jabatan, "atasan": "Owner", "status": "Aktif",
+                "gaji_pokok": thp, "tunjangan_transportasi": 0, "tunjangan_makan": 0,
+                "tunjangan_kesehatan": 0, "sistem_kerja": "Bulanan",
+                "no_rek": no_rek, "bank": bank,
+            })
+            imported += 1
+    return {"ok": True, "karyawan_baru": imported, "karyawan_updated": updated_thp}
+
+
     """Re-import the built-in AP Group template."""
     path = os.environ.get("KPI_TEMPLATE_PATH", "/app/AP_GROUP_KPI_template.xlsm")
     if not os.path.exists(path):
@@ -850,8 +1319,57 @@ async def startup():
                 with open(path, "rb") as f:
                     stats = await import_from_xlsx_bytes(f.read())
                 logger.info(f"Auto imported template: {stats}")
-            except Exception as e:
+            except Exception:
                 logger.exception("Auto import failed")
+    # auto import payroll master (gaji_pokok, no_rek) if not yet done
+    if (await db.karyawan.count_documents({"gaji_pokok": {"$gt": 0}})) == 0:
+        payroll_path = "/app/AP_GROUP_payroll_template.xlsx"
+        if os.path.exists(payroll_path):
+            try:
+                # simulate call
+                clean = _clean_drawings(open(payroll_path,"rb").read())
+                wb = openpyxl.load_workbook(io.BytesIO(clean), data_only=True)
+                preview_sheet = None
+                for sn in wb.sheetnames:
+                    if "preview" in sn.lower() and "copy" not in sn.lower():
+                        preview_sheet = sn; break
+                if preview_sheet:
+                    ws = wb[preview_sheet]
+                    existing = {k["nama"].lower().strip(): k for k in await crud_list("karyawan") if k.get("nama")}
+                    imported = updated_thp = 0
+                    for r in ws.iter_rows(min_row=3, values_only=True):
+                        if not r or not r[1]: continue
+                        nama = str(r[1]).strip()
+                        if nama.upper().startswith("TOTAL"): continue
+                        jabatan = str(r[2] or "").strip()
+                        try: thp = float(r[4] or r[3] or 0)
+                        except Exception: thp = 0
+                        no_rek = str(r[6] or "").strip() if len(r) > 6 else ""
+                        bank = str(r[7] or "BCA").strip() if len(r) > 7 else "BCA"
+                        matched = None
+                        for en, kar in existing.items():
+                            if en[:15] == nama.lower()[:15] or nama.lower().startswith(en[:15]):
+                                matched = kar; break
+                        if matched:
+                            await db.karyawan.update_one({"nik": matched["nik"]},
+                                {"$set": {"no_rek": no_rek, "bank": bank, "gaji_pokok": thp}})
+                            updated_thp += 1
+                        else:
+                            nik = "AUTO" + str(uuid.uuid4())[:6].upper()
+                            div = "Lain"
+                            for dname in ["Marketing","Produksi","Admin","Design","HR","Finance"]:
+                                if dname.lower() in jabatan.lower(): div = dname; break
+                            await db.karyawan.insert_one({
+                                "id": new_id(), "nik": nik, "nama": nama, "divisi": div,
+                                "jabatan": jabatan, "atasan": "Owner", "status": "Aktif",
+                                "gaji_pokok": thp, "tunjangan_transportasi": 0, "tunjangan_makan": 0,
+                                "tunjangan_kesehatan": 0, "sistem_kerja": "Bulanan",
+                                "no_rek": no_rek, "bank": bank,
+                            })
+                            imported += 1
+                    logger.info(f"Auto imported payroll master: baru={imported}, updated={updated_thp}")
+            except Exception:
+                logger.exception("Payroll auto import failed")
     # seed demo users if not exist
     for uinfo in [
         {"email":"supervisor@apgroup.com","name":"Supervisor Demo","role":"supervisor","password":"Supervisor123!"},

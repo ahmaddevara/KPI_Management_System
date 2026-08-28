@@ -20,8 +20,15 @@ export function AuthProvider({ children }) {
   const login = async (email, password) => {
     const { data } = await api.post("/auth/login", { email, password });
     if (data?.token) localStorage.setItem("kpi_token", data.token);
-    setUser(data);
-    return data;
+    // Refetch full user via /auth/me to ensure divisi/nik are present
+    try {
+      const me = await api.get("/auth/me");
+      setUser(me.data);
+      return me.data;
+    } catch {
+      setUser(data);
+      return data;
+    }
   };
 
   const logout = async () => {

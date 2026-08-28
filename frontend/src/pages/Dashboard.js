@@ -27,6 +27,7 @@ export default function Dashboard() {
 
   if (!data) return <div className="text-sm text-gray-500">Memuat...</div>;
 
+  const personal = data.personal;
   const overall = (data.overall_score * 100).toFixed(2);
   const target = (data.target * 100).toFixed(0);
   const gap = (data.gap * 100).toFixed(2);
@@ -53,12 +54,16 @@ export default function Dashboard() {
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
-        <Card testid="kpi-overall" label="Overall KPI" value={`${overall}%`} sub={`Target ${target}%`} tone={+overall >= +target ? "ok":"danger"} />
+        <Card testid="kpi-overall" label={personal ? "Score Anda" : "Overall KPI"} value={`${overall}%`} sub={`Target ${target}%`} tone={+overall >= +target ? "ok":"danger"} />
         <Card testid="kpi-gap" label="Gap vs Target" value={`${gap}%`} sub={+gap >= 0 ? "Di atas target" : "Di bawah target"} tone={+gap>=0?"ok":"warn"} />
-        <Card testid="kpi-karyawan" label="Karyawan Dinilai" value={data.karyawan_dinilai} sub={`${data.on_track} on-track`} tone="brand" />
-        <Card testid="kpi-ontrack" label="On Track" value={data.on_track} sub={`dari ${data.karyawan_dinilai} karyawan`} tone="ok" />
+        {!personal && <Card testid="kpi-karyawan" label="Karyawan Dinilai" value={data.karyawan_dinilai} sub={`${data.on_track} on-track`} tone="brand" />}
+        {!personal && <Card testid="kpi-ontrack" label="On Track" value={data.on_track} sub={`dari ${data.karyawan_dinilai} karyawan`} tone="ok" />}
+        {personal && <Card testid="kpi-grade" label="Grade Anda" value={(data.ranking?.[0]?.grade) || "-"} sub="Berdasarkan skor bulan ini" tone="brand" />}
+        {personal && <Card testid="kpi-status" label="Status" value={+overall >= +target ? "On Track" : "Perlu Perhatian"} sub={data.bulan_nama + " " + data.tahun} tone={+overall >= +target ? "ok":"warn"}/>}
       </div>
 
+      {!personal && (
+      <>
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
         <div className="lg:col-span-2 bg-white border border-gray-200 rounded-sm p-4">
           <div className="flex items-center justify-between mb-3">
@@ -137,6 +142,8 @@ export default function Dashboard() {
           </table>
         </div>
       </div>
+      </>
+      )}
     </div>
   );
 }

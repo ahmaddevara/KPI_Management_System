@@ -1,0 +1,55 @@
+{
+  "summary": "Tested the reported Input-KPI month-switch bug and the new Supervisor<->Divisi integration on the public preview URL. Backend: 21 pytest cases (19 pass / 2 fail) in /app/backend/tests/test_supervisor_divisi.py. Frontend: Playwright flows for admin month switching + save/persist, supervisor locked-divisi + draft/submit, karyawan personal dashboard/rekap, user management divisi-vs-NIK selector, and rekap individu/divisi/reward freshness. The reported month-stuck bug is FIXED. Two new defects found in the supervisor-divisi feature (login payload missing divisi -> wrong divisi shown/loaded right after login; supervisor saves land as 'approved' instead of 'draft', so Submit reports 0).",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "POST /api/auth/login", "issue": "Response omits `divisi` (and returns nik only). AuthContext.login() sets user directly from this payload, so immediately after login user.divisi is undefined -> InputKPI shows 'Divisi: —' and falls back to divisiList[0] ('Produksi'), rendering another division's employees/KPI rows to a Marketing supervisor. Only fixed after a hard reload (/auth/me returns divisi). Fix: include divisi in the login response (or refetch /auth/me after login).", "priority": "CRITICAL"},
+      {"endpoint": "POST /api/kpi-input/bulk", "issue": "Supervisor draft workflow broken. KPIInput.status has default 'approved', so model_dump(exclude_none=True) always contains status='approved' and the `if \"status\" not in d` branch never applies default_status='draft'. Verified: supervisor stephan.eka saved a row and it persisted as status='approved' (UI pill 'approved'), then POST /kpi-input/submit returned {submitted: 0} ('0 data disubmit'). Supervisor input therefore bypasses admin approval and immediately affects rekap/reward. Fix: make KPIInput.status Optional[str]=None and set it server-side by role.", "priority": "HIGH"}
+    ],
+    "minor": [
+      {"endpoint": "GET /api/kpi-input, POST /api/kpi-input/bulk", "issue": "Supervisors with divisi=None (katrin@apgroup.com, supervisor@apgroup.com still exist in DB) are NOT scoped at all — they can read and write every division's KPI. Enforce divisi presence for role=supervisor at registration and deny/scope-to-nothing when missing. Note: the old supervisor@apgroup.com was reported as deleted but is still present."},
+      {"endpoint": "POST /api/auth/register", "issue": "No validation that role=supervisor supplies a divisi (and that the divisi exists), and no validation that role=karyawan supplies a valid nik; divisi is silently dropped for non-supervisor roles."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "InputKPI (supervisor)", "issue": "Right after login (SPA navigation, no reload) the locked pill reads 'Divisi: —' and the grid loads 16 Produksi rows for a Marketing supervisor; context bar shows 'Divisi Produksi'. Root cause is the login payload missing divisi (see backend issue).", "selector": "[data-testid=\"input-divisi-locked\"], [data-testid=\"input-context\"]", "priority": "CRITICAL"},
+      {"component": "InputKPI (supervisor)", "issue": "After Simpan the status pill shows 'approved' instead of 'draft'; Submit then toasts '0 data disubmit'.", "selector": "[data-testid=\"input-save\"], [data-testid=\"input-submit\"]", "priority": "HIGH"},
+      {"component": "UserManagement select", "issue": "React hydration console error: 'In HTML, <span> cannot be a child of <option>' — a <span> is rendered inside an <option>.", "selector": "[data-testid=\"user-role\"] / option", "priority": "LOW"}
+    ],
+    "integration_issues": [
+      {"flow": "Supervisor draft -> submit -> admin approve", "issue": "Chain is non-functional because saves are already 'approved'; submit modifies 0 rows.", "affected_selectors": ["[data-testid=\"input-save\"]", "[data-testid=\"input-submit\"]"]}
+    ],
+    "design_issues": [
+      {"screen": "Karyawan Dashboard (personal=true)", "issues": ["'Trend KPI Perusahaan' and 'KPI per Divisi' charts render as empty boxes (API returns trend/divisi = []) — hide these cards for personal view", "Company-wide 'Distribusi Grade' card shown to an individual employee"]},
+      {"screen": "Login page (1920x1080)", "issues": ["Hero panel only occupies the top-right ~290px and the form is pushed low; large empty area — panel/form are not vertically full-height"]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_supervisor_divisi.py",
+    "/app/test_reports/pytest/pytest_results_iter2.xml"
+  ],
+  "action_items": [
+    "Return `divisi` in POST /api/auth/login response (or have AuthContext.login call /auth/me) so supervisor divisi binding works without a page reload",
+    "Fix draft status: KPIInput.status must default to None so supervisor bulk saves become 'draft' and Submit works",
+    "Delete/assign divisi for legacy supervisors katrin@apgroup.com and supervisor@apgroup.com; reject supervisor accounts without divisi and scope unscoped supervisors to nothing",
+    "Validate divisi (supervisor) / nik (karyawan) in POST /api/auth/register",
+    "Hide empty trend/divisi charts and company grade distribution on the karyawan personal dashboard",
+    "Remove <span> inside <option> in UserManagement to clear hydration error",
+    "Update /app/memory/test_credentials.md (still lists deleted supervisor@apgroup.com / Supervisor123!; add stephan.eka@apgroup.com / MrktSpv123! with divisi=Marketing)"
+  ],
+  "critical_code_review_comments": [
+    "server.py bulk_upsert_input: relying on `if \"status\" not in d` is unsafe when the Pydantic field has a non-None default — always derive status from role explicitly",
+    "server.py list_input: divisi filtering happens after all rows are fetched and enriched in Python; push the divisi/kode_kpi filter into the Mongo query for scale and to guarantee scoping",
+    "server.py get_current_user returns whole user doc but /auth/login hand-builds a partial payload — duplicate shapes cause drift (this bug). Return one shared serializer",
+    "server.py is ~1400 lines; split into routers (auth, master, kpi, payroll, export)",
+    "server.py line ~1357: orphaned docstring/body after import_payroll_from_excel (dead code from a removed endpoint) — remove"
+  ],
+  "updated_files": ["/app/backend/tests/test_supervisor_divisi.py"],
+  "success_rate": {"backend": "90% (19/21)", "frontend": "70% (month-switch bug fixed & verified; supervisor divisi + draft flow failing)"},
+  "seed_data_creation": "Created and then deleted temp users test_spv_qa@apgroup.com / test_kar_qa@apgroup.com. Test kpi_input rows for 2026 months 9/10/11 were created and have been deleted. NOTE: the rekap-freshness test overwrote seeded row EMP001/MKT01 Aug-2026 realisasi to 7.5 (original value not recoverable) — re-import the template if the seeded Aug figures matter.",
+  "should_call_test_agent_after_fix": true,
+  "should_main_agent_self_test": false,
+  "test_credentials": "Admin devaraahmad@gmail.com/Admin123! OK; Supervisor stephan.eka@apgroup.com/MrktSpv123! OK (divisi=Marketing); Karyawan karyawan@apgroup.com/Karyawan123! OK (NIK=EMP001). /app/memory/test_credentials.md is stale.",
+  "context_for_next_testing_agent": "Month-switch bug is verified fixed: admin Aug2026 -> Sep2026 clears inputs, all pills 'belum-diisi', context bar updates, saving in Sep persists after reload and does not touch Aug. Re-verify (1) supervisor divisi right after login WITHOUT reloading the page (that is where it breaks), (2) supervisor Simpan produces status 'draft' and Submit flips to 'submitted', (3) unscoped supervisors (no divisi) are denied. Run: cd /app/backend && python -m pytest tests/test_supervisor_divisi.py -v -n 0. Login page has no button[type=submit]; use [data-testid=\"login-submit\"]. To switch accounts in Playwright, click sidebar 'Keluar' first (visiting /login while authenticated redirects to /).",
+  "rca_of_the_issue": "Reported month-stuck bug: fixed by reqIdRef race guard + clearing inputs/values on bulan/tahun/divisi change; confirmed working. New defect 1: /api/auth/login builds a partial user payload without `divisi`, while AuthContext stores that payload as the user, so InputKPI's supDivisi is empty until /auth/me runs on a reload; the divisi fallback then picks divisiList[0] and renders another division's rows. New defect 2: KPIInput.status defaults to 'approved', so model_dump always includes it and bulk_upsert_input's default_status='draft' for supervisors is dead code — supervisor writes are auto-approved and /kpi-input/submit finds no draft rows."
+}

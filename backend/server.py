@@ -100,6 +100,7 @@ class UserCreate(BaseModel):
     name: str
     role: str  # admin | supervisor | karyawan
     nik: Optional[str] = None
+    divisi: Optional[str] = None  # required for supervisor role
 
 class Divisi(BaseModel):
     id: Optional[str] = None
@@ -155,7 +156,7 @@ class KPIInput(BaseModel):
     nik: str
     kode_kpi: str
     realisasi: float
-    status: Optional[str] = "approved"  # draft | submitted | approved | rejected
+    status: Optional[str] = None  # draft | submitted | approved | rejected; None = auto by role
 
 class PayrollInput(BaseModel):
     id: Optional[str] = None
@@ -194,7 +195,8 @@ async def login(req: LoginReq, response: Response):
         raise HTTPException(401, "Email atau password salah")
     token = make_token(user["id"], user["email"], user["role"])
     response.set_cookie("access_token", token, httponly=True, secure=True, samesite="none", max_age=60*60*24*7, path="/")
-    return {"id": user["id"], "email": user["email"], "name": user["name"], "role": user["role"], "nik": user.get("nik"), "token": token}
+    return {"id": user["id"], "email": user["email"], "name": user["name"], "role": user["role"],
+            "nik": user.get("nik"), "divisi": user.get("divisi"), "token": token}
 
 @api.post("/auth/logout")
 async def logout(response: Response):
@@ -210,8 +212,21 @@ async def register_user(payload: UserCreate, user: dict = Depends(require_role("
     email = payload.email.lower()
     if await db.users.find_one({"email": email}):
         raise HTTPException(400, "Email sudah terdaftar")
+    if payload.role == "supervisor" and not payload.divisi:
+        raise HTTPException(400, "Supervisor wajib memilih divisi yang dinaungi")
+    if payload.role == "karyawan" and not payload.nik:
+        raise HTTPException(400, "Karyawan wajib dihubungkan dengan NIK")
+    if payload.role == "supervisor":
+        exists = await db.divisi.find_one({"nama": payload.divisi})
+        if not exists:
+            raise HTTPException(400, f"Divisi '{payload.divisi}' tidak ditemukan")
+    if payload.role == "karyawan":
+        exists = await db.karyawan.find_one({"nik": payload.nik})
+        if not exists:
+            raise HTTPException(400, f"NIK '{payload.nik}' tidak ditemukan di Master Karyawan")
     doc = {"id": new_id(), "email": email, "password_hash": hash_pw(payload.password),
            "name": payload.name, "role": payload.role, "nik": payload.nik,
+           "divisi": payload.divisi if payload.role == "supervisor" else None,
            "created_at": datetime.now(timezone.utc).isoformat()}
     await db.users.insert_one(doc)
     doc.pop("password_hash")
@@ -347,6 +362,9 @@ async def list_input(divisi: Optional[str] = None, bulan: Optional[int] = None, 
         if not user.get("nik"):
             return []
         q["nik"] = user["nik"]
+    # supervisor scoped to their assigned divisi
+    if user.get("role") == "supervisor" and user.get("divisi"):
+        divisi = user["divisi"]
     if only_approved:
         q["status"] = "approved"
     inputs = [strip_id(d) for d in await db.kpi_input.find(q).to_list(50000)]
@@ -394,11 +412,20 @@ async def list_input(divisi: Optional[str] = None, bulan: Optional[int] = None, 
 @api.post("/kpi-input/bulk")
 async def bulk_upsert_input(rows: List[KPIInput], user: dict = Depends(require_role("admin","supervisor"))):
     default_status = "draft" if user.get("role") == "supervisor" else "approved"
+    # Supervisor may only bulk-write for KPIs in their divisi
+    if user.get("role") == "supervisor":
+        if not user.get("divisi"):
+            raise HTTPException(403, "Supervisor belum memiliki divisi. Hubungi Admin untuk assign divisi.")
+        kpi_master = {k["kode"]: k for k in await crud_list("kpi_master")}
+        for r in rows:
+            km = kpi_master.get(r.kode_kpi, {})
+            if km.get("divisi") != user["divisi"]:
+                raise HTTPException(403, f"Supervisor {user['divisi']} tidak boleh menyimpan KPI divisi {km.get('divisi','?')}")
     for r in rows:
         d = r.model_dump(exclude_none=True)
         d["id"] = d.get("id") or new_id()
-        if "status" not in d or not d["status"]:
-            d["status"] = default_status
+        # Server-side authoritative status: supervisor -> draft, admin -> approved
+        d["status"] = default_status
         await db.kpi_input.update_one(
             {"nik": d["nik"], "kode_kpi": d["kode_kpi"], "tahun": d["tahun"], "bulan": d["bulan"]},
             {"$set": d}, upsert=True,
@@ -409,6 +436,8 @@ async def bulk_upsert_input(rows: List[KPIInput], user: dict = Depends(require_r
 async def submit_input(body: dict, user: dict = Depends(require_role("supervisor","admin"))):
     """Supervisor submits kpi_input for approval. Body: {tahun, bulan, divisi}"""
     tahun, bulan, divisi = body.get("tahun"), body.get("bulan"), body.get("divisi")
+    if user.get("role") == "supervisor" and user.get("divisi"):
+        divisi = user["divisi"]
     kpi_master = {k["kode"]: k for k in await crud_list("kpi_master")}
     kodes = [k for k, v in kpi_master.items() if not divisi or v.get("divisi") == divisi]
     res = await db.kpi_input.update_many(

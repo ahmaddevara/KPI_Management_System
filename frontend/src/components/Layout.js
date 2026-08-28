@@ -85,7 +85,7 @@ export default function Layout() {
             </div>
             <div className="flex-1 min-w-0">
               <div className="text-sm font-medium truncate">{user.name}</div>
-              <div className="text-[11px] uppercase tracking-wider text-gray-500">{user.role}</div>
+              <div className="text-[11px] uppercase tracking-wider text-gray-500">{user.role}{user.divisi ? ` · ${user.divisi}` : ""}{user.nik ? ` · ${user.nik}` : ""}</div>
             </div>
           </div>
           <button
